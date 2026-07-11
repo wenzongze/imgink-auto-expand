@@ -1,0 +1,40 @@
+# 隐私配置（含账号密码，切勿提交）
+config.ini
+
+# 运行时生成的数据
+title.txt
+jobnames.json
+disabled.flag
+*.flag
+
+# 日志
+*.log
+cron.log
+web.log
+keepalive.log
+nas.log
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 虚拟环境 / 依赖打包
+venv/
+.venv/
+env/
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# 数据库 / 本地数据
+*.sqlite3
+*.db
+
+# 系统/编辑器
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
