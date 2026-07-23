@@ -1,0 +1,18 @@
+cat > deploy_restart.sh << 'EOF'
+#!/bin/sh
+DIR="/share/CACHEDEV1_DATA/Web/gadget/auto_sign"
+PID=$(ps aux | grep "[w]eb_app.py" | grep -v grep | awk '{print $1}' | head -1)
+if [ -n "$PID" ]; then
+  echo "kill old pid: $PID"
+  kill $PID 2>/dev/null
+  sleep 2
+fi
+/bin/sh "$DIR/start_web.sh"
+sleep 2
+HIT=$(curl -s http://127.0.0.1:9999/api/status | grep -o '"name"' | head -1)
+if [ -n "$HIT" ]; then
+  echo "DEPLOY_OK: 新版本已生效 (含 name 字段)"
+else
+  echo "DEPLOY_WARN: 未检测到 name 字段，请手动检查"
+fi
+EOF

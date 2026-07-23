@@ -917,7 +917,7 @@ def get_all_cron_jobs():
         {
             "keys": ["nas_cron.sh", "nas_main.py", "microsoft/"],
             "name": "🪟 微软积分自动获取",
-            "desc": "每天 09:00 与 21:00 触发，脚本内部再随机延迟 0~30 分钟启动；自动完成必应 PC/移动端搜索、每日卡片与打卡任务攒微软积分（含 NAS 随机延迟）。点击「立即执行」可手动触发（含随机延迟）。",
+            "desc": "每天 09:00 与 21:00 触发，脚本内部再随机延迟 0~30 分钟启动；自动完成必应 PC/移动端搜索、每日卡片与「每日连续打卡活动」等打卡任务攒微软积分。点击「立即执行」可手动触发（后台运行、随机延迟控制在 1 分钟内，约 15~25 分钟完成）。",
             "runnable": True,
             "imgink": False,
             "system": False,
@@ -1102,22 +1102,33 @@ def api_run_job():
                                       "nas_cron.sh", "nas_main.py", "microsoft/")):
             is_keepalive = ("nas_keepalive.sh" in command) or ("--keepalive" in command)
             script = command
+            # 立即执行：给 nas_cron.sh 追加 --now 参数，确保走「立即模式」（≤1 分钟延迟）。
+            # 同时仍注入 IMMEDIATE=1（传给容器，脚本据此判断手动触发不发邮件），双保险。
+            if not is_keepalive and "nas_cron.sh" in script:
+                script = script.replace("nas_cron.sh", "nas_cron.sh --now", 1)
             # 若是完整 crontab 行（含时间字段），取最后的命令部分
             parts = command.split()
             if len(parts) >= 6 and all(x.replace('*', '').isdigit() or x in ('*',)
                                        for x in parts[:5]):
                 script = " ".join(parts[5:])
-            result = subprocess.run(
+            # 手动触发：注入 IMMEDIATE=1，让 nas_cron.sh 的随机延迟控制在 1 分钟内；
+            # 并用 Popen 后台启动（start_new_session），面板立即返回、不再等待任务结束，
+            # 彻底消除「超时 10 分钟」误报（任务本身会跑 15~25 分钟，日志写入 nas.log）。
+            env = {**os.environ, 'IMMEDIATE': '1'}
+            subprocess.Popen(
                 ["/bin/sh", "-c", script],
-                cwd=BASE_DIR, capture_output=True, text=True, timeout=600, env=env
+                cwd=BASE_DIR, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                env=env, start_new_session=True,
             )
-            output = result.stdout + result.stderr
-            default_msg = ('已触发微软登录态保活（请稍后查看保活日志）' if is_keepalive
-                           else '已触发微软积分任务（含 NAS 随机延迟，请稍后查看日志）')
+            default_msg = ('已在后台触发微软登录态保活（约 5 分钟，请稍后查看保活日志）'
+                           if is_keepalive else
+                           '已在后台触发微软积分任务（随机延迟控制在 1 分钟内，约 15~25 分钟完成，'
+                           '请稍后点「📜 日志」查看 nas.log）')
             return jsonify({
-                'success': result.returncode == 0,
-                'result': (output.strip() or default_msg),
-                'exit_code': result.returncode,
+                'success': True,
+                'result': default_msg,
+                'exit_code': None,
+                'background': True,
             })
 
         # img.ink 扩容任务：直接调脚本（跳过随机延迟）
