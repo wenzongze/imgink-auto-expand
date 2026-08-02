@@ -347,9 +347,11 @@ TEMPLATE = r"""<!DOCTYPE html>
     <button class="btn btn-refresh" onclick="loadStatus()">🔄 刷新</button>
     <button class="btn btn-selfcheck" id="btnSelfCheck" onclick="runSelfCheck()">🔍 页面自检</button>
     <button class="btn btn-restart" id="btnRestart" onclick="restartPanel()">♻️ 重启面板</button>
+    <button class="btn btn-selfcheck" id="btnExpandCheck" onclick="runExpandCheck()">✅ 扩容自检</button>
   </div>
 
   <div id="selfCheckBox" class="self-check" style="display:none;"></div>
+  <div id="expandCheckBox" class="self-check" style="display:none; margin-top:12px;"></div>
 
   <div class="section-title" style="margin-top:10px;">
     📋 全部计划任务
@@ -600,6 +602,34 @@ async function runSelfCheck() {
     `<div class="hint">${hint}</div>`;
   box.style.display = 'block';
   btn.disabled = false; btn.textContent = '🔍 页面自检';
+}
+
+// 扩容自检：调后端 /api/check-expand，判断「今天是否真的扩容成功」
+async function runExpandCheck() {
+  const box = document.getElementById('expandCheckBox');
+  const btn = document.getElementById('btnExpandCheck');
+  btn.disabled = true; btn.textContent = '⏳ 自检中...';
+  box.style.display = 'block';
+  box.innerHTML = '<h3>✅ 扩容自检</h3><div class="row"><span class="label">状态</span> <span class="tag">⏳ 核验中...</span></div>';
+  try {
+    const resp = await fetch('/api/check-expand', { method: 'POST' });
+    const data = await resp.json();
+    if (!data.success) {
+      box.innerHTML = `<h3>✅ 扩容自检</h3><div class="row"><span class="label">结果</span> <span class="tag bad">❌ 请求失败</span> <span class="val">${escapeHtml(data.error || '')}</span></div>`;
+    } else {
+      const ok = data.ok;
+      const cls = ok ? 'ok' : 'bad';
+      const icon = ok ? '✅ 通过' : '❌ 未通过';
+      const esc = escapeHtml(data.result);
+      box.innerHTML = `<h3>✅ 扩容自检结果</h3>`
+        + `<div class="row"><span class="label">结论</span> <span class="tag ${cls}">${icon}</span> <span class="val">(exit ${data.exit_code})</span></div>`
+        + `<div class="hint"><pre class="job-log-pre" style="white-space:pre-wrap;word-break:break-all;">${esc}</pre></div>`;
+    }
+  } catch (e) {
+    box.innerHTML = `<h3>✅ 扩容自检</h3><div class="row"><span class="label">结果</span> <span class="tag bad">❌ 异常</span> <span class="val">${escapeHtml(String(e))}</span></div>`;
+  } finally {
+    btn.disabled = false; btn.textContent = '✅ 扩容自检';
+  }
 }
 
 async function loadStatus() {
@@ -1081,6 +1111,38 @@ def api_run():
         return jsonify({'success': False, 'error': str(e)})
 
 
+@app.route('/api/check-expand', methods=['POST'])
+def api_check_expand():
+    """只读自检：判断今日 img.ink 扩容是否真的完成（不重复触发扩容）。"""
+    try:
+        # 解释器：NAS 上用固定路径；其他环境回退到当前面板进程的解释器
+        python = "/share/CACHEDEV1_DATA/.qpkg/Python3/opt/python3/bin/python3"
+        if not os.path.exists(python):
+            python = sys.executable
+        child_env = {**os.environ, 'PYTHONUNBUFFERED': '1'}
+        if os.path.exists("/share/homes/Mars/.local/lib/python3.12/site-packages"):
+            child_env['PYTHONPATH'] = "/share/homes/Mars/.local/lib/python3.12/site-packages"
+        result = subprocess.run(
+            [python, SCRIPT_PATH, "--check"],
+            cwd=BASE_DIR,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=child_env
+        )
+        output = result.stdout + result.stderr
+        return jsonify({
+            'success': True,
+            'result': output.strip() or '自检完毕（无输出）',
+            'exit_code': result.returncode,
+            'ok': result.returncode == 0,
+        })
+    except subprocess.TimeoutExpired:
+        return jsonify({'success': False, 'error': '执行超时（超过2分钟）'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+
 @app.route('/api/run-job', methods=['POST'])
 def api_run_job():
     """按 crontab 行索引手动触发某个已登记的可执行任务"""
@@ -1102,10 +1164,6 @@ def api_run_job():
                                       "nas_cron.sh", "nas_main.py", "microsoft/")):
             is_keepalive = ("nas_keepalive.sh" in command) or ("--keepalive" in command)
             script = command
-            # 立即执行：给 nas_cron.sh 追加 --now 参数，确保走「立即模式」（≤1 分钟延迟）。
-            # 同时仍注入 IMMEDIATE=1（传给容器，脚本据此判断手动触发不发邮件），双保险。
-            if not is_keepalive and "nas_cron.sh" in script:
-                script = script.replace("nas_cron.sh", "nas_cron.sh --now", 1)
             # 若是完整 crontab 行（含时间字段），取最后的命令部分
             parts = command.split()
             if len(parts) >= 6 and all(x.replace('*', '').isdigit() or x in ('*',)
